@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🤖 Bot Candidature — Dashboard</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --surface: #1a1d27;
+    --surface2: #222535;
+    --accent: #6c63ff;
+    --accent2: #00d4aa;
+    --danger: #ff5f6d;
+    --warn: #ffc107;
+    --text: #e8eaf0;
+    --muted: #8b90a7;
+    --border: #2e3249;
+    --radius: 12px;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px;
+  }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+  }
+
+  header h1 { font-size: 1.5rem; font-weight: 700; }
+  header h1 span { color: var(--accent); }
+
+  .badge {
+    background: var(--accent);
+    color: white;
+    font-size: 0.7rem;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    margin-left: 8px;
+  }
+
+  /* Stats ─────────────────────────────── */
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 20px;
+    text-align: center;
+  }
+
+  .stat-card .val {
+    font-size: 2.2rem;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 6px;
+  }
+
+  .stat-card .lbl { font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  .stat-card.blue  .val { color: var(--accent); }
+  .stat-card.green .val { color: var(--accent2); }
+  .stat-card.red   .val { color: var(--danger); }
+  .stat-card.warn  .val { color: var(--warn); }
+
+  /* Critères ──────────────────────────── */
+  .section-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+    margin-bottom: 14px;
+  }
+
+  .criteria-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+
+  .criteria-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 18px;
+  }
+
+  .criteria-card h3 {
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  .tag {
+    display: inline-block;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    margin: 3px 3px 3px 0;
+  }
+
+  .tag.accent { border-color: var(--accent); color: var(--accent); }
+  .tag.green  { border-color: var(--accent2); color: var(--accent2); }
+
+  input, select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    width: 100%;
+    margin-top: 4px;
+    outline: none;
+    transition: border-color .2s;
+  }
+
+  input:focus, select:focus { border-color: var(--accent); }
+
+  .tag-input-wrapper {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-height: 42px;
+    cursor: text;
+    transition: border-color .2s;
+  }
+
+  .tag-input-wrapper:focus-within { border-color: var(--accent); }
+
+  .tag-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 0.82rem;
+  }
+
+  .tag-item button {
+    background: none;
+    border: none;
+    color: var(--accent);
+    cursor: pointer;
+    padding: 0;
+    font-size: 1rem;
+    line-height: 1;
+  }
+
+  .tag-input-wrapper input {
+    border: none;
+    background: none;
+    padding: 0;
+    margin: 0;
+    flex: 1;
+    min-width: 80px;
+    width: auto;
+  }
+
+  /* Boutons ───────────────────────────── */
+  .btn {
+    padding: 11px 22px;
+    border-radius: 9px;
+    border: none;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .15s, transform .1s;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .btn:active { transform: scale(.97); }
+  .btn:hover  { opacity: .88; }
+  .btn.primary   { background: var(--accent); color: white; }
+  .btn.success   { background: var(--accent2); color: #0f1117; }
+  .btn.danger    { background: var(--danger); color: white; }
+  .btn.secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+
+  .btn-row { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 32px; }
+
+  /* Table candidatures ────────────────── */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+  }
+
+  table { width: 100%; border-collapse: collapse; }
+
+  thead th {
+    background: var(--surface2);
+    padding: 12px 16px;
+    text-align: left;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--muted);
+    letter-spacing: .06em;
+    border-bottom: 1px solid var(--border);
+  }
+
+  tbody tr {
+    border-bottom: 1px solid var(--border);
+    transition: background .15s;
+  }
+
+  tbody tr:last-child { border-bottom: none; }
+  tbody tr:hover { background: var(--surface2); }
+
+  tbody td {
+    padding: 12px 16px;
+    font-size: 0.87rem;
+    vertical-align: middle;
+  }
+
+  .pill {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .pill.envoyé   { background: #00d4aa22; color: var(--accent2); border: 1px solid var(--accent2); }
+  .pill.en-cours { background: #6c63ff22; color: var(--accent); border: 1px solid var(--accent); }
+  .pill.refus    { background: #ff5f6d22; color: var(--danger); border: 1px solid var(--danger); }
+  .pill.relance  { background: #ffc10722; color: var(--warn); border: 1px solid var(--warn); }
+  .pill.a-pos    { background: #ffffff11; color: var(--muted); border: 1px solid var(--border); }
+
+  .score-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .score-bar div {
+    height: 6px;
+    border-radius: 3px;
+    background: var(--border);
+    width: 80px;
+    overflow: hidden;
+  }
+
+  .score-bar div span {
+    display: block;
+    height: 100%;
+    border-radius: 3px;
+    background: var(--accent2);
+    transition: width .4s;
+  }
+
+  .empty-state {
+    padding: 60px 20px;
+    text-align: center;
+    color: var(--muted);
+  }
+
+  .empty-state p { margin-top: 12px; font-size: 0.9rem; }
+
+  /* Toast ─────────────────────────────── */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    background: var(--surface);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 12px 20px;
+    border-radius: 10px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity .3s;
+    z-index: 999;
+    pointer-events: none;
+  }
+
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🤖 Bot <span>Candidature</span><span class="badge">v1.0</span></h1>
+  <div id="session-date" style="color:var(--muted);font-size:.85rem;"></div>
+</header>
+
+<!-- Stats ────────────────────────────────────── -->
+<div class="stats" id="stats">
+  <div class="stat-card blue">
+    <div class="val" id="stat-total">0</div>
+    <div class="lbl">Candidatures</div>
+  </div>
+  <div class="stat-card green">
+    <div class="val" id="stat-envoyees">0</div>
+    <div class="lbl">Envoyées</div>
+  </div>
+  <div class="stat-card warn">
+    <div class="val" id="stat-encours">0</div>
+    <div class="lbl">En attente</div>
+  </div>
+  <div class="stat-card red">
+    <div class="val" id="stat-refus">0</div>
+    <div class="lbl">Refus</div>
+  </div>
+</div>
+
+<!-- Critères ─────────────────────────────────── -->
+<p class="section-title">⚙️ Critères de recherche</p>
+<div class="criteria-grid">
+  <div class="criteria-card">
+    <h3>Postes ciblés</h3>
+    <div class="tag-input-wrapper" id="postes-wrapper">
+      <!-- tags dynamiques -->
+      <input id="postes-input" placeholder="Ajouter un poste…" onkeydown="addTag('postes-wrapper','postes-input',event)">
+    </div>
+  </div>
+  <div class="criteria-card">
+    <h3>Localisation</h3>
+    <div class="tag-input-wrapper" id="loca-wrapper">
+      <input id="loca-input" placeholder="Ville ou 'remote'…" onkeydown="addTag('loca-wrapper','loca-input',event)">
+    </div>
+  </div>
+  <div class="criteria-card">
+    <h3>Salaire minimum (€ brut/an)</h3>
+    <input type="number" id="salaire-min" placeholder="ex: 40000" min="0" step="1000">
+  </div>
+  <div class="criteria-card">
+    <h3>Type de contrat</h3>
+    <select id="type-contrat" multiple style="height:90px;">
+      <option selected>CDI</option>
+      <option selected>CDD</option>
+      <option selected>freelance</option>
+      <option>stage</option>
+      <option>alternance</option>
+    </select>
+  </div>
+  <div class="criteria-card">
+    <h3>Mots-clés exclus</h3>
+    <div class="tag-input-wrapper" id="excl-wrapper">
+      <input id="excl-input" placeholder="ex: stage, bénévolat…" onkeydown="addTag('excl-wrapper','excl-input',event)">
+    </div>
+  </div>
+  <div class="criteria-card">
+    <h3>Score CV minimum</h3>
+    <input type="range" id="score-min" min="0" max="100" value="60" oninput="document.getElementById('score-val').textContent=this.value+'%'" style="padding:0;background:none;border:none;">
+    <p style="margin-top:8px;color:var(--accent);font-weight:700;" id="score-val">60%</p>
+  </div>
+</div>
+
+<!-- Boutons ──────────────────────────────────── -->
+<div class="btn-row">
+  <button class="btn primary"   onclick="saveConfig()">💾 Sauvegarder critères</button>
+  <button class="btn success"   onclick="launchBot()">🚀 Lancer la recherche</button>
+  <button class="btn secondary" onclick="exportCSV()">📥 Exporter CSV</button>
+</div>
+
+<!-- Table ────────────────────────────────────── -->
+<p class="section-title">📋 Suivi des candidatures</p>
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Poste</th>
+        <th>Entreprise</th>
+        <th>Localisation</th>
+        <th>Salaire</th>
+        <th>Score CV</th>
+        <th>Plateforme</th>
+        <th>Statut</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody id="cand-table-body">
+      <tr><td colspan="9"><div class="empty-state">🔍 <p>Aucune candidature pour l'instant. Lance la recherche pour commencer.</p></div></td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div id="toast"></div>
+
+<script>
+// ── Data ──────────────────────────────────────────────────────────────────────
+let candidatures = JSON.parse(localStorage.getItem('candidatures') || '[]');
+let config = JSON.parse(localStorage.getItem('bot_config') || '{}');
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.onload = () => {
+  document.getElementById('session-date').textContent =
+    new Date().toLocaleDateString('fr-FR', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+
+  // Restaurer config
+  const savedCfg = JSON.parse(localStorage.getItem('bot_config') || '{}');
+  if (savedCfg.postes)       savedCfg.postes.forEach(p => insertTag('postes-wrapper', p));
+  if (savedCfg.localisation) savedCfg.localisation.forEach(l => insertTag('loca-wrapper', l));
+  if (savedCfg.exclus)       savedCfg.exclus.forEach(e => insertTag('excl-wrapper', e));
+  if (savedCfg.salaire_min)  document.getElementById('salaire-min').value = savedCfg.salaire_min;
+  if (savedCfg.score_min) {
+    document.getElementById('score-min').value = savedCfg.score_min;
+    document.getElementById('score-val').textContent = savedCfg.score_min + '%';
+  }
+
+  refreshTable();
+  refreshStats();
+};
+
+// ── Tags ──────────────────────────────────────────────────────────────────────
+function addTag(wrapperId, inputId, e) {
+  if (e.key === 'Enter' || e.key === ',') {
+    e.preventDefault();
+    const input = document.getElementById(inputId);
+    const val = input.value.trim().replace(/,$/, '');
+    if (!val) return;
+    insertTag(wrapperId, val);
+    input.value = '';
+  }
+}
+
+function insertTag(wrapperId, val) {
+  const wrapper = document.getElementById(wrapperId);
+  const input = wrapper.querySelector('input');
+  const tag = document.createElement('span');
+  tag.className = 'tag-item';
+  tag.innerHTML = `${val} <button onclick="this.parentElement.remove()" title="Supprimer">×</button>`;
+  wrapper.insertBefore(tag, input);
+}
+
+function getTagsFrom(wrapperId) {
+  return [...document.querySelectorAll(`#${wrapperId} .tag-item`)]
+    .map(t => t.textContent.trim().replace('×', '').trim());
+}
+
+// ── Config ────────────────────────────────────────────────────────────────────
+function saveConfig() {
+  const cfg = {
+    postes:       getTagsFrom('postes-wrapper'),
+    localisation: getTagsFrom('loca-wrapper'),
+    salaire_min:  parseInt(document.getElementById('salaire-min').value) || 0,
+    score_min:    parseInt(document.getElementById('score-min').value) || 60,
+    exclus:       getTagsFrom('excl-wrapper'),
+    contrats:     [...document.getElementById('type-contrat').selectedOptions].map(o => o.value)
+  };
+  localStorage.setItem('bot_config', JSON.stringify(cfg));
+  toast('✅ Critères sauvegardés !');
+}
+
+// ── Bot launch ────────────────────────────────────────────────────────────────
+function launchBot() {
+  saveConfig();
+  const cfg = JSON.parse(localStorage.getItem('bot_config') || '{}');
+  if (!cfg.postes || cfg.postes.length === 0) {
+    toast('⚠️ Ajoute au moins un poste ciblé.', true);
+    return;
+  }
+  toast('🚀 Demande envoyée à Claude — recherche en cours…');
+  // Envoie un prompt à Claude via le bouton global sendPrompt
+  const postes = cfg.postes.join(', ');
+  const loca   = cfg.localisation.join(', ') || 'Paris';
+  sendPrompt(`Lance la recherche d'offres avec ces critères : postes="${postes}", localisation="${loca}", salaire min=${cfg.salaire_min}€, score CV min=${cfg.score_min}%, contrats=${cfg.contrats.join(',')}. Cherche sur Indeed, filtre selon les critères, génère les lettres et enregistre dans le tracker.`);
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+function statusPill(statut) {
+  const map = {
+    'Envoyé': 'envoyé', 'En attente': 'en-cours',
+    'Refus': 'refus', 'Relance': 'relance', 'À postuler': 'a-pos'
+  };
+  const cls = map[statut] || 'a-pos';
+  return `<span class="pill ${cls}">${statut}</span>`;
+}
+
+function scoreBar(score) {
+  const s = parseInt(score) || 0;
+  const color = s >= 75 ? '#00d4aa' : s >= 50 ? '#6c63ff' : '#ff5f6d';
+  return `<div class="score-bar">
+    <div><span style="width:${s}%;background:${color}"></span></div>
+    <span style="font-size:.8rem">${s}%</span>
+  </div>`;
+}
+
+function refreshTable() {
+  const tbody = document.getElementById('cand-table-body');
+  if (!candidatures.length) {
+    tbody.innerHTML = `<tr><td colspan="9"><div class="empty-state">🔍 <p>Aucune candidature pour l'instant. Lance la recherche pour commencer.</p></div></td></tr>`;
+    return;
+  }
+  tbody.innerHTML = candidatures.map((c, i) => `
+    <tr>
+      <td style="color:var(--muted);font-size:.8rem;">${c.date || '—'}</td>
+      <td><strong>${c.poste || '—'}</strong></td>
+      <td>${c.entreprise || '—'}</td>
+      <td>${c.localisation || '—'}</td>
+      <td>${c.salaire || 'N/A'}</td>
+      <td>${scoreBar(c.score_cv)}</td>
+      <td><span class="tag">${c.plateforme || 'indeed'}</span></td>
+      <td>
+        <select onchange="updateStatus(${i}, this.value)" style="width:130px;padding:5px 8px;">
+          ${['À postuler','Envoyé','En attente','Relance','Refus'].map(s =>
+            `<option ${c.statut===s?'selected':''}>${s}</option>`).join('')}
+        </select>
+      </td>
+      <td>
+        ${c.lien ? `<a href="${c.lien}" target="_blank" style="color:var(--accent);text-decoration:none;font-size:.82rem;">Voir l'offre →</a>` : '—'}
+      </td>
+    </tr>
+  `).join('');
+}
+
+function updateStatus(i, val) {
+  candidatures[i].statut = val;
+  localStorage.setItem('candidatures', JSON.stringify(candidatures));
+  refreshStats();
+  toast('Statut mis à jour');
+}
+
+function refreshStats() {
+  document.getElementById('stat-total').textContent    = candidatures.length;
+  document.getElementById('stat-envoyees').textContent = candidatures.filter(c => c.statut === 'Envoyé').length;
+  document.getElementById('stat-encours').textContent  = candidatures.filter(c => c.statut === 'En attente').length;
+  document.getElementById('stat-refus').textContent    = candidatures.filter(c => c.statut === 'Refus').length;
+}
+
+// ── Export CSV ────────────────────────────────────────────────────────────────
+function exportCSV() {
+  const headers = ['date','poste','entreprise','localisation','salaire','score_cv','plateforme','statut','lien'];
+  const rows = [headers, ...candidatures.map(c => headers.map(h => `"${(c[h]||'').toString().replace(/"/g,'""')}"`))];
+  const blob = new Blob([rows.map(r => r.join(',')).join('\n')], {type:'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `candidatures_${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  toast('📥 Export CSV lancé');
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function toast(msg, error = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = error ? 'var(--danger)' : 'var(--accent)';
+  t.style.color = error ? 'var(--danger)' : 'var(--accent)';
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 3000);
+}
+
+// ── Exposition pour Claude (ajout de candidatures depuis l'extérieur) ─────────
+window.addCandidature = function(data) {
+  candidatures.push({
+    date: new Date().toLocaleString('fr-FR'),
+    statut: 'À postuler',
+    ...data
+  });
+  localStorage.setItem('candidatures', JSON.stringify(candidatures));
+  refreshTable();
+  refreshStats();
+};
+</script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+{
+  "_instructions": "Modifie ce fichier pour personnaliser les critères de recherche du bot. Sauvegarde et relance le bot.",
+
+  "postes": [
+    "Chef de projet digital",
+    "Product Manager",
+    "Business Analyst"
+  ],
+
+  "localisation": {
+    "villes": ["Paris", "Île-de-France"],
+    "remote": true,
+    "hybride": true,
+    "code_pays": "FR"
+  },
+
+  "salaire": {
+    "minimum_annuel_brut": 40000,
+    "devise": "EUR",
+    "filtrer_si_inconnu": false
+  },
+
+  "type_contrat": ["CDI", "CDD", "freelance"],
+
+  "mots_cles_requis": [],
+
+  "mots_cles_exclus": [
+    "stage",
+    "alternance",
+    "apprentissage",
+    "bénévolat"
+  ],
+
+  "entreprises_exclues": [],
+
+  "score_minimum_cv": 60,
+
+  "candidature": {
+    "auto_postuler": true,
+    "generer_lettre_motivation": true,
+    "langue_lettre": "fr",
+    "max_candidatures_par_session": 20,
+    "delai_entre_candidatures_secondes": 30
+  },
+
+  "plateformes": {
+    "indeed": true,
+    "linkedin": true,
+    "welcome_to_the_jungle": true
+  },
+
+  "cv_path": "cv.pdf"
+}
