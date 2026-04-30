@@ -9,6 +9,9 @@ from pathlib import Path
 from flask import (Flask, render_template_string, request, redirect,
                    url_for, session, jsonify, send_from_directory)
 from werkzeug.utils import secure_filename
+from job_search import search_jobs, score_cv_job as _score
+from cv_optimizer import (process_cover_letter, score_ai_detection,
+                          extract_ats_keywords, adapt_cv_for_job)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
@@ -21,7 +24,9 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", secrets.token_hex(32))
 app.config["MAX_CONTENT_LENGTH"] = 10 * 1024 * 1024   # 10 MB max CV
 
-ANTHROPIC_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
+ANTHROPIC_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")
+FT_CLIENT_ID   = os.environ.get("FT_CLIENT_ID", "")    # France Travail (optionnel)
+FT_SECRET      = os.environ.get("FT_CLIENT_SECRET", "") # France Travail (optionnel)
 
 # ── Base de données ───────────────────────────────────────────────────────────
 def get_db():
@@ -57,22 +62,55 @@ def init_db():
     );
 
     CREATE TABLE IF NOT EXISTS candidatures (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id     INTEGER REFERENCES users(id),
-        job_id      TEXT,
-        poste       TEXT,
-        entreprise  TEXT,
-        localisation TEXT,
-        salaire     TEXT,
-        plateforme  TEXT DEFAULT 'indeed',
-        lien        TEXT,
-        score_cv    INTEGER DEFAULT 0,
-        lettre      TEXT DEFAULT '',
-        statut      TEXT DEFAULT 'À postuler',
-        created_at  TEXT DEFAULT (datetime('now')),
+        id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id             INTEGER REFERENCES users(id),
+        job_id              TEXT,
+        poste               TEXT,
+        entreprise          TEXT,
+        localisation        TEXT,
+        salaire             TEXT,
+        plateforme          TEXT DEFAULT 'indeed',
+        lien                TEXT,
+        description_offre   TEXT DEFAULT '',
+        score_cv            INTEGER DEFAULT 0,
+        lettre_brute        TEXT DEFAULT '',
+        lettre              TEXT DEFAULT '',
+        score_ia_avant      INTEGER DEFAULT 0,
+        score_ia_apres      INTEGER DEFAULT 0,
+        keywords_ats        TEXT DEFAULT '[]',
+        validation_status   TEXT DEFAULT 'pending',
+        note_utilisateur    TEXT DEFAULT '',
+        statut              TEXT DEFAULT 'À postuler',
+        created_at          TEXT DEFAULT (datetime('now')),
+        validated_at        TEXT DEFAULT '',
         UNIQUE(user_id, job_id)
     );
+
+    -- Migration silencieuse pour bases existantes
+    -- (SQLite ignore les colonnes déjà présentes)
     """)
+
+    # Migration colonnes manquantes (bases existantes)
+    cols_needed = {
+        "candidatures": [
+            ("description_offre",  "TEXT DEFAULT ''"),
+            ("lettre_brute",       "TEXT DEFAULT ''"),
+            ("score_ia_avant",     "INTEGER DEFAULT 0"),
+            ("score_ia_apres",     "INTEGER DEFAULT 0"),
+            ("keywords_ats",       "TEXT DEFAULT '[]'"),
+            ("validation_status",  "TEXT DEFAULT 'pending'"),
+            ("note_utilisateur",   "TEXT DEFAULT ''"),
+            ("validated_at",       "TEXT DEFAULT ''"),
+            ("cv_adapte",          "TEXT DEFAULT ''"),
+            ("cv_docx_path",       "TEXT DEFAULT ''"),
+        ]
+    }
+    for table, cols in cols_needed.items():
+        existing = [row[1] for row in db.execute(f"PRAGMA table_info({table})").fetchall()]
+        for col_name, col_def in cols:
+            if col_name not in existing:
+                db.execute(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_def}")
+    db.commit()
     db.commit()
     db.close()
 
@@ -154,6 +192,71 @@ Consignes : lettre en français, 3 paragraphes max, ton professionnel, personnal
     except Exception as e:
         return ""
 
+# ── Analyse CV ────────────────────────────────────────────────────────────────
+def analyze_cv(cv_text: str, postes: list, user_name: str) -> dict:
+    """Analyse le CV face aux postes ciblés et retourne un rapport structuré JSON."""
+    if not ANTHROPIC_KEY:
+        return {}
+    if not cv_text:
+        return {}
+    try:
+        import anthropic
+        c = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+        postes_str = ", ".join(postes) if postes else "non précisés"
+        msg = c.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=1800,
+            messages=[{"role": "user", "content": f"""
+Tu es un expert RH et coach carrière. Analyse ce CV en profondeur par rapport aux postes ciblés.
+
+CANDIDAT : {user_name}
+POSTES CIBLÉS : {postes_str}
+
+CV COMPLET :
+{cv_text[:4000]}
+
+Retourne UNIQUEMENT un JSON valide (pas de texte autour) avec cette structure exacte :
+{{
+  "score_global": <entier 0-100>,
+  "resume": "<2 phrases résumant le profil et son adéquation aux postes>",
+  "points_forts": [
+    {{"titre": "<force>", "detail": "<explication concrète>"}},
+    {{"titre": "<force>", "detail": "<explication concrète>"}},
+    {{"titre": "<force>", "detail": "<explication concrète>"}}
+  ],
+  "points_faibles": [
+    {{"titre": "<faiblesse>", "detail": "<ce qui manque par rapport aux postes visés>"}},
+    {{"titre": "<faiblesse>", "detail": "<ce qui manque par rapport aux postes visés>"}}
+  ],
+  "ameliorations": [
+    {{"priorite": "haute", "action": "<action concrète à faire>", "impact": "<pourquoi ça aide>"}},
+    {{"priorite": "haute", "action": "<action concrète>", "impact": "<pourquoi>"}},
+    {{"priorite": "moyenne", "action": "<action concrète>", "impact": "<pourquoi>"}},
+    {{"priorite": "moyenne", "action": "<action concrète>", "impact": "<pourquoi>"}},
+    {{"priorite": "basse", "action": "<action concrète>", "impact": "<pourquoi>"}}
+  ],
+  "mots_cles_manquants": ["<mot-clé>", "<mot-clé>", "<mot-clé>", "<mot-clé>", "<mot-clé>"],
+  "mots_cles_presents": ["<mot-clé>", "<mot-clé>", "<mot-clé>"],
+  "conseil_format": "<conseil sur la mise en forme et la structure du CV>",
+  "sections": {{
+    "experience": <entier 0-100>,
+    "competences": <entier 0-100>,
+    "formation": <entier 0-100>,
+    "impact": <entier 0-100>
+  }}
+}}
+"""}]
+        )
+        raw = msg.content[0].text.strip()
+        # Nettoyer si le modèle ajoute du texte autour
+        start = raw.find("{")
+        end   = raw.rfind("}") + 1
+        if start >= 0 and end > start:
+            raw = raw[start:end]
+        return json.loads(raw)
+    except Exception as e:
+        return {}
+
 # ════════════════════════════════════════════════════════════════════════════════
 #  TEMPLATES HTML
 # ════════════════════════════════════════════════════════════════════════════════
@@ -213,6 +316,9 @@ tbody td{padding:11px 14px;font-size:.85rem;vertical-align:middle}
   <span class="logo">🤖 Job<span>Bot</span></span>
   {% if user %}
   <a href="/dashboard">Dashboard</a>
+  <a href="/valider" style="color:var(--yw);font-weight:700">✅ À valider</a>
+  <a href="/analyse-cv">🧠 Analyser mon CV</a>
+  <a href="/optimiser">🛡️ Anti-détection IA</a>
   <a href="/profile">Mon profil</a>
   <span class="spacer"></span>
   <span style="color:var(--mt);font-size:.85rem">👤 {{ user.name }}</span>
@@ -390,6 +496,7 @@ DASHBOARD_HTML = """
       <form method="POST" action="/search">
         <button class="btn btn-pr">🔍 Lancer une recherche</button>
       </form>
+      <a href="/analyse-cv" class="btn btn-sec">🧠 Analyser mon CV</a>
       <a href="/profile" class="btn btn-sec">⚙️ Mes critères</a>
     </div>
   </div>
@@ -536,6 +643,416 @@ RESULTS_HTML = """
       <button class="btn btn-pr" style="font-size:1rem;padding:14px 36px">🚀 Postuler à toutes ({{ jobs|length }})</button>
     </form>
   </div>
+  {% endif %}
+</div>
+"""
+
+ANALYSE_HTML = """
+<div class="page" style="max-width:900px">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:8px">
+    <a href="/dashboard" style="color:var(--mt);font-size:.85rem">← Dashboard</a>
+  </div>
+  <h2>🧠 Analyse de ton CV</h2>
+  <p class="sub">L'IA compare ton CV avec tes postes ciblés et te dit exactement quoi améliorer.</p>
+
+  {% if not profile.cv_filename %}
+  <div class="card" style="border-color:var(--yw);text-align:center;padding:50px">
+    <div style="font-size:2.5rem;margin-bottom:12px">📄</div>
+    <p style="font-weight:700;margin-bottom:8px">Aucun CV uploadé</p>
+    <p style="color:var(--mt);margin-bottom:20px">Upload ton CV dans ton profil pour lancer l'analyse.</p>
+    <a href="/profile" class="btn btn-pr">Uploader mon CV →</a>
+  </div>
+
+  {% elif not postes %}
+  <div class="card" style="border-color:var(--yw);text-align:center;padding:50px">
+    <div style="font-size:2.5rem;margin-bottom:12px">🎯</div>
+    <p style="font-weight:700;margin-bottom:8px">Aucun poste ciblé défini</p>
+    <p style="color:var(--mt);margin-bottom:20px">Ajoute des postes ciblés dans ton profil pour que l'IA puisse calibrer l'analyse.</p>
+    <a href="/profile" class="btn btn-pr">Configurer mes critères →</a>
+  </div>
+
+  {% elif not analyse %}
+  <div style="text-align:center;padding:40px 0">
+    <form method="POST" action="/analyse-cv">
+      <button class="btn btn-pr" style="font-size:1rem;padding:16px 40px">
+        🚀 Lancer l'analyse IA
+      </button>
+      <p style="color:var(--mt);font-size:.82rem;margin-top:14px">Prend ~10 secondes · Postes ciblés : {{ postes|join(', ') }}</p>
+    </form>
+  </div>
+
+  {% else %}
+
+  <!-- Score global -->
+  <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,#1a1d27,#222535)">
+    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px">
+      <div>
+        <div style="font-size:.8rem;color:var(--mt);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px">Score global</div>
+        <div style="font-size:3.5rem;font-weight:900;line-height:1;color:{% if analyse.score_global>=75 %}var(--gr){% elif analyse.score_global>=50 %}var(--acc){% else %}var(--rd){% endif %}">
+          {{ analyse.score_global }}<span style="font-size:1.5rem">/100</span>
+        </div>
+        <div style="color:var(--mt);font-size:.88rem;margin-top:8px;max-width:500px">{{ analyse.resume }}</div>
+      </div>
+      <!-- Radar scores -->
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;min-width:220px">
+        {% for label, key in [('Expérience','experience'),('Compétences','competences'),('Formation','formation'),('Impact','impact')] %}
+        <div>
+          <div style="font-size:.72rem;color:var(--mt);margin-bottom:4px">{{ label }}</div>
+          <div style="display:flex;align-items:center;gap:6px">
+            <div style="flex:1;height:6px;background:var(--bd);border-radius:3px;overflow:hidden">
+              <div style="height:100%;width:{{ analyse.sections[key] }}%;background:{% if analyse.sections[key]>=75 %}var(--gr){% elif analyse.sections[key]>=50 %}var(--acc){% else %}var(--rd){% endif %};border-radius:3px"></div>
+            </div>
+            <span style="font-size:.75rem;font-weight:700">{{ analyse.sections[key] }}%</span>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+    <!-- Points forts -->
+    <div class="card">
+      <h3 style="color:var(--gr)">✅ Points forts</h3>
+      {% for p in analyse.points_forts %}
+      <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--bd)">
+        <div style="font-weight:700;font-size:.9rem;margin-bottom:3px">{{ p.titre }}</div>
+        <div style="color:var(--mt);font-size:.83rem;line-height:1.5">{{ p.detail }}</div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <!-- Points faibles -->
+    <div class="card">
+      <h3 style="color:var(--rd)">⚠️ Points à améliorer</h3>
+      {% for p in analyse.points_faibles %}
+      <div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid var(--bd)">
+        <div style="font-weight:700;font-size:.9rem;margin-bottom:3px">{{ p.titre }}</div>
+        <div style="color:var(--mt);font-size:.83rem;line-height:1.5">{{ p.detail }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Plan d'action -->
+  <div class="card" style="margin-bottom:20px">
+    <h3>🎯 Plan d'action — ce que tu dois faire</h3>
+    {% for a in analyse.ameliorations %}
+    <div style="display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--bd);align-items:flex-start">
+      <span class="pill {% if a.priorite=='haute' %}pill-rd{% elif a.priorite=='moyenne' %}pill-yw{% else %}pill-mt{% endif %}" style="white-space:nowrap;margin-top:2px">
+        {{ '🔴 Urgent' if a.priorite=='haute' else ('🟡 Moyen' if a.priorite=='moyenne' else '🟢 Plus tard') }}
+      </span>
+      <div>
+        <div style="font-weight:700;font-size:.9rem;margin-bottom:3px">{{ a.action }}</div>
+        <div style="color:var(--mt);font-size:.82rem">{{ a.impact }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+    <!-- Mots-clés manquants -->
+    <div class="card">
+      <h3>🔑 Mots-clés manquants</h3>
+      <p style="color:var(--mt);font-size:.82rem;margin-bottom:14px">Ces termes apparaissent dans les offres de ton secteur mais pas dans ton CV. Ajoute-les si pertinent.</p>
+      <div>
+        {% for kw in analyse.mots_cles_manquants %}
+        <span class="pill pill-rd" style="margin:3px">{{ kw }}</span>
+        {% endfor %}
+      </div>
+    </div>
+
+    <!-- Mots-clés présents -->
+    <div class="card">
+      <h3>✅ Mots-clés détectés</h3>
+      <p style="color:var(--mt);font-size:.82rem;margin-bottom:14px">Bonne nouvelle — ces termes clés sont déjà dans ton CV.</p>
+      <div>
+        {% for kw in analyse.mots_cles_presents %}
+        <span class="pill pill-gr" style="margin:3px">{{ kw }}</span>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Conseil format -->
+  <div class="card" style="border-color:var(--acc)">
+    <h3 style="color:var(--acc)">💡 Conseil mise en forme</h3>
+    <p style="color:var(--mt);font-size:.88rem;line-height:1.6">{{ analyse.conseil_format }}</p>
+  </div>
+
+  <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+    <form method="POST" action="/analyse-cv">
+      <button class="btn btn-sec">🔄 Relancer l'analyse</button>
+    </form>
+    <a href="/profile" class="btn btn-pr">✏️ Modifier mon CV</a>
+  </div>
+
+  {% endif %}
+</div>
+"""
+
+VALIDATION_LIST_HTML = """
+<div class="page">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:24px;flex-wrap:wrap;gap:12px">
+    <div>
+      <h2>✅ Candidatures à valider</h2>
+      <p class="sub" style="margin:0">Revois et approuve chaque lettre avant qu'elle parte. Rien n'est envoyé sans ton accord.</p>
+    </div>
+    <a href="/dashboard" class="btn btn-sec">← Dashboard</a>
+  </div>
+
+  {% if not pending %}
+  <div class="card" style="text-align:center;padding:60px">
+    <div style="font-size:2.5rem;margin-bottom:12px">🎉</div>
+    <p style="font-weight:700">Tout est validé !</p>
+    <p style="color:var(--mt);margin-top:8px">Lance une nouvelle recherche pour obtenir de nouvelles candidatures.</p>
+  </div>
+  {% else %}
+  <div style="display:grid;gap:16px">
+  {% for c in pending %}
+  <div class="card" style="border-left:4px solid var(--yw)">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:1.05rem;font-weight:700">{{ c.poste }}</div>
+        <div style="color:var(--mt);font-size:.88rem;margin-top:2px">
+          {{ c.entreprise }} — {{ c.localisation or 'Localisation non précisée' }}
+          {% if c.salaire %} · {{ c.salaire }}{% endif %}
+        </div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <span class="pill pill-mt">{{ c.plateforme }}</span>
+          <span class="pill {% if c.score_cv>=75 %}pill-gr{% elif c.score_cv>=50 %}pill-acc{% else %}pill-rd{% endif %}">
+            Score CV : {{ c.score_cv }}%
+          </span>
+          {% if c.score_ia_avant %}
+          <span class="pill pill-yw">IA avant : {{ c.score_ia_avant }}/100</span>
+          <span class="pill pill-gr">IA après : {{ c.score_ia_apres }}/100</span>
+          {% endif %}
+        </div>
+      </div>
+      <div style="display:flex;gap:8px">
+        <a href="/valider/{{ c.id }}" class="btn btn-pr btn-sm">👁️ Revoir & Valider</a>
+        <form method="POST" action="/valider/{{ c.id }}/rejeter" style="display:inline">
+          <button class="btn btn-sec btn-sm" style="color:var(--rd);border-color:var(--rd)">✗ Ignorer</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+  </div>
+  {% endif %}
+</div>
+"""
+
+VALIDATION_DETAIL_HTML = """
+<div class="page" style="max-width:1200px">
+  <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;flex-wrap:wrap">
+    <a href="/valider" style="color:var(--mt);font-size:.85rem">← Retour à la liste</a>
+    <h2 style="margin:0">✅ Valider la candidature</h2>
+  </div>
+
+  <!-- Header offre -->
+  <div class="card" style="margin-bottom:20px;background:linear-gradient(135deg,var(--s),var(--s2))">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px">
+      <div>
+        <div style="font-size:1.2rem;font-weight:800">{{ c.poste }}</div>
+        <div style="color:var(--mt);margin-top:4px">{{ c.entreprise }} · {{ c.localisation }} {% if c.salaire %}· 💰 {{ c.salaire }}{% endif %}</div>
+        {% if c.lien %}<a href="{{ c.lien }}" target="_blank" style="font-size:.82rem;color:var(--acc);margin-top:6px;display:inline-block">🔗 Voir l'offre originale →</a>{% endif %}
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:.75rem;color:var(--mt)">Score CV</div>
+        <div style="font-size:1.8rem;font-weight:800;color:{% if c.score_cv>=75 %}var(--gr){% elif c.score_cv>=50 %}var(--acc){% else %}var(--rd){% endif %}">{{ c.score_cv }}%</div>
+      </div>
+    </div>
+    {% if c.score_ia_avant %}
+    <div style="display:flex;gap:12px;margin-top:14px;flex-wrap:wrap">
+      <span class="pill pill-yw">🤖 Détection IA avant : {{ c.score_ia_avant }}/100</span>
+      <span class="pill pill-gr">✅ Après humanisation : {{ c.score_ia_apres }}/100</span>
+      <span class="pill pill-gr">📉 Amélioration : -{{ c.score_ia_avant - c.score_ia_apres }} pts</span>
+    </div>
+    {% endif %}
+  </div>
+
+  <form method="POST" action="/valider/{{ c.id }}/approuver">
+
+  <!-- ══ SECTION CV ══════════════════════════════════════════════════════════ -->
+  <div style="margin-bottom:10px">
+    <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--mt);font-weight:700;margin-bottom:10px">
+      📄 CURRICULUM VITAE
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:6px">
+
+      <!-- CV Original -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0;color:var(--mt);font-size:.88rem">📄 CV original</h3>
+        </div>
+        <div style="background:var(--s2);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:.78rem;line-height:1.6;border:1px solid var(--bd);max-height:340px;overflow-y:auto;color:var(--mt)">{{ cv_original or '(CV non chargé dans le profil)' }}</div>
+      </div>
+
+      <!-- CV Adapté (éditable) -->
+      <div class="card" style="border-color:var(--gr)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0;color:var(--gr);font-size:.88rem">🎯 CV adapté à cette offre</h3>
+          <span style="font-size:.72rem;color:var(--mt)">Éditable</span>
+        </div>
+        {% if c.cv_adapte %}
+        <textarea name="cv_final" rows="16"
+          style="width:100%;background:var(--s2);border:1px solid var(--gr);border-radius:8px;
+                 padding:14px;font-size:.78rem;line-height:1.6;color:var(--tx);resize:vertical">{{ c.cv_adapte }}</textarea>
+        {% else %}
+        <div style="background:var(--s2);border-radius:8px;padding:14px;color:var(--mt);font-size:.82rem;border:1px dashed var(--bd)">
+          ⚠️ Pas de CV uploadé ou clé Anthropic manquante — adaptation non disponible.
+          <textarea name="cv_final" rows="8" style="margin-top:10px;width:100%"
+            placeholder="Tu peux coller ici ta version adaptée manuellement…"></textarea>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- ══ SECTION LETTRE ══════════════════════════════════════════════════════ -->
+  <div style="margin-bottom:10px">
+    <div style="font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:var(--mt);font-weight:700;margin-bottom:10px;margin-top:8px">
+      ✉️ LETTRE DE MOTIVATION
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:6px">
+
+      <!-- Lettre brute -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0;color:var(--mt);font-size:.88rem">🤖 Version brute (avant humanisation)</h3>
+        </div>
+        <div style="background:var(--s2);border-radius:8px;padding:14px;white-space:pre-wrap;font-size:.8rem;line-height:1.6;border:1px solid var(--bd);max-height:340px;overflow-y:auto;color:var(--mt)">{{ c.lettre_brute or '(non disponible)' }}</div>
+      </div>
+
+      <!-- Lettre optimisée (éditable) -->
+      <div class="card" style="border-color:var(--acc)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+          <h3 style="margin:0;color:var(--acc);font-size:.88rem">✨ Version humanisée & optimisée ATS</h3>
+          <span style="font-size:.72rem;color:var(--mt)">Éditable</span>
+        </div>
+        <textarea name="lettre_finale" rows="16"
+          style="width:100%;background:var(--s2);border:1px solid var(--acc);border-radius:8px;
+                 padding:14px;font-size:.8rem;line-height:1.65;color:var(--tx);resize:vertical">{{ c.lettre }}</textarea>
+      </div>
+    </div>
+  </div>
+
+  {% if keywords %}
+  <div class="card" style="margin-bottom:16px">
+    <h3>🔑 Mots-clés ATS injectés</h3>
+    <div style="margin-top:6px">{% for kw in keywords %}<span style="display:inline-block;background:var(--s2);border:1px solid var(--acc);color:var(--acc);border-radius:6px;padding:3px 10px;font-size:.8rem;margin:3px">{{ kw }}</span>{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  <!-- Note de l'utilisateur -->
+  <div class="card" style="margin-bottom:20px">
+    <h3>💬 Ta note (optionnel)</h3>
+    <textarea name="note_utilisateur" rows="2" placeholder="Ajoute une note — rappel, contact, contexte…" style="width:100%;margin-top:6px">{{ c.note_utilisateur or '' }}</textarea>
+  </div>
+
+  <!-- Boutons de validation -->
+  <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <button type="submit" class="btn btn-gr" style="font-size:1rem;padding:14px 32px">
+      ✅ Valider cette candidature
+    </button>
+    <a href="/valider" class="btn btn-sec">Revenir à la liste</a>
+    <form method="POST" action="/valider/{{ c.id }}/rejeter" style="display:inline;margin:0">
+      <button type="submit" class="btn btn-sec" style="color:var(--rd);border-color:var(--rd)">✗ Ignorer cette offre</button>
+    </form>
+  </div>
+  </form>
+</div>
+"""
+
+OPTIMIZER_HTML = """
+<div class="page" style="max-width:900px">
+  <h2>🛡️ Optimiseur Anti-Détection IA</h2>
+  <p class="sub">Colle ta lettre ou une section de CV — le bot la réécrit pour qu'elle passe les filtres ATS et les détecteurs d'IA.</p>
+
+  {% if result %}
+  <!-- Résultats -->
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px">
+    <div class="card" style="text-align:center">
+      <div style="font-size:.75rem;color:var(--mt);text-transform:uppercase;margin-bottom:8px">Score IA avant</div>
+      <div style="font-size:2.5rem;font-weight:900;color:{% if result.score_avant.score>=70 %}var(--rd){% elif result.score_avant.score>=40 %}var(--yw){% else %}var(--gr){% endif %}">
+        {{ result.score_avant.score }}<span style="font-size:1rem">/100</span>
+      </div>
+      <div style="font-size:.8rem;color:var(--mt);margin-top:4px">{{ result.score_avant.niveau }}</div>
+    </div>
+    <div class="card" style="text-align:center">
+      <div style="font-size:.75rem;color:var(--mt);text-transform:uppercase;margin-bottom:8px">Score IA après</div>
+      <div style="font-size:2.5rem;font-weight:900;color:{% if result.score_apres.score>=70 %}var(--rd){% elif result.score_apres.score>=40 %}var(--yw){% else %}var(--gr){% endif %}">
+        {{ result.score_apres.score }}<span style="font-size:1rem">/100</span>
+      </div>
+      <div style="font-size:.8rem;color:var(--mt);margin-top:4px">{{ result.score_apres.niveau }}</div>
+      {% if result.gain > 0 %}
+      <div style="color:var(--gr);font-size:.8rem;font-weight:700;margin-top:4px">▼ -{{ result.gain }} pts d'amélioration</div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if result.keywords_ats %}
+  <div class="card" style="margin-bottom:20px">
+    <h3>🔑 Mots-clés ATS injectés</h3>
+    <div>{% for kw in result.keywords_ats %}<span style="display:inline-block;background:var(--s2);border:1px solid var(--acc);color:var(--acc);border-radius:6px;padding:3px 10px;font-size:.8rem;margin:3px">{{ kw }}</span>{% endfor %}</div>
+  </div>
+  {% endif %}
+
+  <div class="card" style="margin-bottom:24px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+      <h3 style="margin:0">✅ Texte optimisé</h3>
+      <button onclick="navigator.clipboard.writeText(document.getElementById('result-text').textContent);this.textContent='✅ Copié !';setTimeout(()=>this.textContent='📋 Copier',2000)" class="btn btn-sec btn-sm">📋 Copier</button>
+    </div>
+    <div id="result-text" style="background:var(--s2);border-radius:8px;padding:18px;white-space:pre-wrap;font-size:.88rem;line-height:1.65;border:1px solid var(--bd)">{{ result.text }}</div>
+  </div>
+
+  <form method="POST" action="/optimiser">
+    <input type="hidden" name="texte" value="{{ form_texte or '' }}">
+    <input type="hidden" name="offre" value="{{ form_offre or '' }}">
+    <button class="btn btn-sec">🔄 Relancer l'optimisation</button>
+  </form>
+
+  {% else %}
+  <!-- Formulaire -->
+  <form method="POST" action="/optimiser">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+      <div class="card">
+        <label>Ton texte à optimiser</label>
+        <textarea name="texte" rows="12" placeholder="Colle ici ta lettre de motivation ou une section de ton CV…" style="margin-top:8px;resize:vertical">{{ form_texte or '' }}</textarea>
+      </div>
+      <div class="card">
+        <label>Description du poste visé (optionnel mais recommandé)</label>
+        <textarea name="offre" rows="12" placeholder="Colle ici la description de l'offre d'emploi pour que le bot injecte les bons mots-clés ATS…" style="margin-top:8px;resize:vertical">{{ form_offre or '' }}</textarea>
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <h3>🎯 Score actuel (avant optimisation)</h3>
+      {% if score_preview %}
+      <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap">
+        <div>
+          <span style="font-size:2rem;font-weight:800;color:{% if score_preview.score>=70 %}var(--rd){% elif score_preview.score>=40 %}var(--yw){% else %}var(--gr){% endif %}">
+            {{ score_preview.score }}/100
+          </span>
+          <span style="color:var(--mt);font-size:.88rem;margin-left:10px">{{ score_preview.niveau }}</span>
+        </div>
+        {% if score_preview.patterns %}
+        <div>
+          <div style="font-size:.75rem;color:var(--mt);margin-bottom:6px">Patterns IA détectés :</div>
+          {% for p in score_preview.patterns[:5] %}<span style="display:inline-block;background:#ff5f6d22;border:1px solid var(--rd);color:var(--rd);border-radius:5px;padding:2px 8px;font-size:.75rem;margin:2px">{{ p }}</span>{% endfor %}
+        </div>
+        {% endif %}
+      </div>
+      {% else %}
+      <p style="color:var(--mt)">Colle ton texte pour voir le score en temps réel.</p>
+      {% endif %}
+    </div>
+
+    <button class="btn btn-pr" style="font-size:1rem;padding:14px 36px">
+      🚀 Humaniser & Optimiser ATS
+    </button>
+  </form>
   {% endif %}
 </div>
 """
@@ -704,50 +1221,32 @@ def search():
     if not postes:
         return redirect(url_for("profile"))
 
-    locations = list(villes)
-    if remote:
-        locations.append("remote")
+    # ── Recherche multi-sources : ATS + job boards français ──────────────────
+    raw_jobs = search_jobs(
+        postes=postes,
+        villes=villes,
+        remote=bool(remote),
+        mots_exclus=exclus,
+        ft_client_id=FT_CLIENT_ID,
+        ft_secret=FT_SECRET,
+    )
 
-    # Simulation de résultats (remplace par un vrai appel API Indeed)
-    # En mode assistant Claude, cette route reçoit les résultats via /api/add-jobs
-    sample_jobs = _get_sample_jobs(postes, locations)
-
-    # Filtrage & scoring
+    # Scoring CV + filtre score minimum
     filtered = []
-    for job in sample_jobs:
-        full = (job.get("title","") + " " + job.get("snippet","")).lower()
-        skip = False
-        for kw in exclus:
-            if kw.lower() in full:
-                skip = True
-                break
-        if skip:
-            continue
-        score = score_cv_job(cv_text, job.get("title",""), job.get("snippet",""))
+    for job in raw_jobs:
+        score = score_cv_job(
+            cv_text,
+            job.get("title", ""),
+            job.get("description", "")
+        )
         if score < score_min:
             continue
-        job["score"] = score
+        job["score"]   = score
+        job["snippet"] = job.get("description", "")[:200]
         filtered.append(job)
 
     filtered.sort(key=lambda j: j["score"], reverse=True)
     return render(LAYOUT.replace("{% block body %}{% endblock %}", RESULTS_HTML), jobs=filtered)
-
-def _get_sample_jobs(postes, locations):
-    """Données de démonstration — remplacé par appel API réel."""
-    samples = []
-    for poste in postes[:2]:
-        for loc in locations[:2]:
-            samples.append({
-                "job_id"  : str(uuid.uuid4())[:8],
-                "title"   : poste,
-                "company" : "Entreprise Exemple",
-                "location": loc,
-                "salary"  : "45 000 – 55 000 € / an",
-                "snippet" : f"Nous recherchons un(e) {poste} expérimenté(e) pour rejoindre notre équipe à {loc}. Vous serez responsable de la gestion de projets digitaux, coordination des équipes et suivi des KPIs.",
-                "url"     : "https://fr.indeed.com",
-                "plateforme": "indeed"
-            })
-    return samples
 
 # ── Postuler (une offre) ──────────────────────────────────────────────────────
 @app.route("/postuler", methods=["POST"])
@@ -768,23 +1267,167 @@ def postuler():
     }
     score = int(request.form.get("score", 0))
 
-    lettre = ""
+    lettre_brute     = ""
+    lettre_optimisee = ""
+    score_ia_avant   = 0
+    score_ia_apres   = 0
+    keywords_ats     = []
+    cv_adapte        = ""
+    cv_docx_path     = ""
+
+    cv_text = prof["cv_text"] if prof else ""
+
     if prof and prof["gen_lettre"]:
-        lettre = generate_letter(prof["cv_text"] or "", job, user["name"])
+        # 1. Adaptation du CV à l'offre (Claude Sonnet)
+        if cv_text and ANTHROPIC_KEY:
+            try:
+                adapt = adapt_cv_for_job(
+                    cv_text=cv_text,
+                    job_title=job["title"],
+                    job_description=job.get("description", ""),
+                    user_name=user["name"],
+                )
+                cv_adapte = adapt.get("cv_complet_adapte", "") or ""
+            except Exception as e:
+                cv_adapte = ""
+
+        # 2. Génération de la lettre brute
+        lettre_brute = generate_letter(cv_text or "", job, user["name"])
+
+        # 3. Humanisation + ATS
+        if lettre_brute:
+            opt = process_cover_letter(
+                lettre=lettre_brute,
+                job_description=job.get("description", ""),
+                cv_text=cv_text or "",
+                user_name=user["name"],
+            )
+            lettre_optimisee = opt.get("text") or lettre_brute
+            score_ia_avant   = opt.get("score_avant", {}).get("score", 0)
+            score_ia_apres   = opt.get("score_apres", {}).get("score", 0)
+            keywords_ats     = opt.get("keywords_ats", [])
+        else:
+            lettre_optimisee = lettre_brute
 
     try:
         db.execute("""INSERT INTO candidatures
-            (user_id,job_id,poste,entreprise,localisation,salaire,plateforme,lien,score_cv,lettre)
-            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+            (user_id,job_id,poste,entreprise,localisation,salaire,plateforme,lien,
+             description_offre,score_cv,lettre_brute,lettre,
+             score_ia_avant,score_ia_apres,keywords_ats,
+             cv_adapte,cv_docx_path,
+             validation_status,statut)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (user["id"], job["job_id"], job["title"], job["company"],
-             job["location"], job["salary"], "indeed", job["url"], score, lettre))
+             job["location"], job["salary"],
+             job.get("plateforme","indeed"), job["url"],
+             job.get("description","")[:1000],
+             score, lettre_brute, lettre_optimisee,
+             score_ia_avant, score_ia_apres,
+             json.dumps(keywords_ats),
+             cv_adapte, cv_docx_path,
+             "pending",   # ← toujours en attente de validation
+             "À valider"
+            ))
         db.commit()
     except sqlite3.IntegrityError:
         pass
     finally:
         db.close()
 
-    return redirect(url_for("dashboard"))
+    # Redirige vers la file de validation, pas le dashboard
+    return redirect(url_for("validation_list"))
+
+# ── Validation — liste des candidatures en attente ───────────────────────────
+@app.route("/valider")
+@login_required
+def validation_list():
+    user = current_user()
+    db   = get_db()
+    pending = db.execute(
+        """SELECT * FROM candidatures
+           WHERE user_id=? AND validation_status='pending'
+           ORDER BY created_at DESC""",
+        (user["id"],)
+    ).fetchall()
+    db.close()
+    return render(
+        LAYOUT.replace("{% block body %}{% endblock %}", VALIDATION_LIST_HTML),
+        pending=pending
+    )
+
+# ── Validation — page de review d'une candidature ────────────────────────────
+@app.route("/valider/<int:cid>")
+@login_required
+def validation_detail(cid):
+    user = current_user()
+    db   = get_db()
+    c    = db.execute(
+        "SELECT * FROM candidatures WHERE id=? AND user_id=?",
+        (cid, user["id"])
+    ).fetchone()
+    db.close()
+    if not c:
+        return redirect(url_for("validation_list"))
+
+    try:
+        keywords = json.loads(c["keywords_ats"] or "[]")
+    except Exception:
+        keywords = []
+
+    # CV original du profil (pour affichage côte à côte)
+    db2  = get_db()
+    prof = db2.execute("SELECT cv_text FROM profiles WHERE user_id=?", (user["id"],)).fetchone()
+    db2.close()
+    cv_original = prof["cv_text"] if prof else ""
+
+    return render(
+        LAYOUT.replace("{% block body %}{% endblock %}", VALIDATION_DETAIL_HTML),
+        c=c, keywords=keywords, cv_original=cv_original
+    )
+
+# ── Validation — approuver ────────────────────────────────────────────────────
+@app.route("/valider/<int:cid>/approuver", methods=["POST"])
+@login_required
+def validation_approuver(cid):
+    user          = current_user()
+    lettre_finale = request.form.get("lettre_finale", "").strip()
+    cv_final      = request.form.get("cv_final", "").strip()
+    note          = request.form.get("note_utilisateur", "").strip()
+    db = get_db()
+    db.execute(
+        """UPDATE candidatures SET
+           lettre=?, cv_adapte=?, note_utilisateur=?,
+           validation_status='validated',
+           statut='À postuler',
+           validated_at=datetime('now')
+           WHERE id=? AND user_id=?""",
+        (lettre_finale, cv_final, note, cid, user["id"])
+    )
+    db.commit()
+    db.close()
+
+    # Retour à la liste — s'il reste des pending, sinon dashboard
+    db2 = get_db()
+    remaining = db2.execute(
+        "SELECT COUNT(*) FROM candidatures WHERE user_id=? AND validation_status='pending'",
+        (user["id"],)
+    ).fetchone()[0]
+    db2.close()
+    return redirect(url_for("validation_list") if remaining else url_for("dashboard"))
+
+# ── Validation — rejeter ──────────────────────────────────────────────────────
+@app.route("/valider/<int:cid>/rejeter", methods=["POST"])
+@login_required
+def validation_rejeter(cid):
+    user = current_user()
+    db   = get_db()
+    db.execute(
+        "UPDATE candidatures SET validation_status='rejected', statut='Ignoré' WHERE id=? AND user_id=?",
+        (cid, user["id"])
+    )
+    db.commit()
+    db.close()
+    return redirect(url_for("validation_list"))
 
 # ── Statut candidature ────────────────────────────────────────────────────────
 @app.route("/candidature/<int:cid>/statut", methods=["POST"])
@@ -798,6 +1441,59 @@ def update_statut(cid):
     db.commit()
     db.close()
     return redirect(url_for("dashboard"))
+
+# ── Analyse CV ────────────────────────────────────────────────────────────────
+@app.route("/analyse-cv", methods=["GET","POST"])
+@login_required
+def analyse_cv():
+    user = current_user()
+    db   = get_db()
+    prof = db.execute("SELECT * FROM profiles WHERE user_id=?", (user["id"],)).fetchone()
+    db.close()
+
+    postes  = json.loads(prof["postes"] or "[]") if prof else []
+    analyse = None
+
+    if request.method == "POST" and prof and prof["cv_text"]:
+        analyse = analyze_cv(prof["cv_text"], postes, user["name"])
+
+    return render(
+        LAYOUT.replace("{% block body %}{% endblock %}", ANALYSE_HTML),
+        profile=prof or {},
+        postes=postes,
+        analyse=analyse
+    )
+
+# ── Optimiseur anti-détection IA ─────────────────────────────────────────────
+@app.route("/optimiser", methods=["GET","POST"])
+@login_required
+def optimiser():
+    result        = None
+    score_preview = None
+    form_texte    = ""
+    form_offre    = ""
+
+    if request.method == "POST":
+        form_texte = request.form.get("texte", "").strip()
+        form_offre = request.form.get("offre", "").strip()
+
+        if form_texte:
+            result = process_cover_letter(
+                lettre=form_texte,
+                job_description=form_offre,
+            )
+        # Score preview pour GET avec texte pré-rempli
+        score_preview = score_ai_detection(form_texte) if form_texte else None
+    else:
+        score_preview = None
+
+    return render(
+        LAYOUT.replace("{% block body %}{% endblock %}", OPTIMIZER_HTML),
+        result=result,
+        score_preview=score_preview,
+        form_texte=form_texte,
+        form_offre=form_offre,
+    )
 
 # ── Voir lettre ───────────────────────────────────────────────────────────────
 @app.route("/lettre/<int:cid>")
