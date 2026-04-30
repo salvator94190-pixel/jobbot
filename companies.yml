@@ -1,0 +1,328 @@
+# Liste des entreprises scannées par JobBot
+# ATS supportés : greenhouse | ashby | lever
+# Ajoute tes propres entreprises en bas du fichier !
+
+companies:
+
+  # ── FRENCH TECH ──────────────────────────────────────────────────────────────
+  - name: Doctolib
+    slug: doctolib
+    ats: greenhouse
+    enabled: true
+
+  - name: BlaBlaCar
+    slug: blablacar
+    ats: greenhouse
+    enabled: true
+
+  - name: Contentsquare
+    slug: contentsquare
+    ats: greenhouse
+    enabled: true
+
+  - name: Qonto
+    slug: qonto
+    ats: lever
+    enabled: true
+
+  - name: Alan
+    slug: alan
+    ats: ashby
+    enabled: true
+
+  - name: Payfit
+    slug: payfit
+    ats: greenhouse
+    enabled: true
+
+  - name: Pennylane
+    slug: pennylane
+    ats: ashby
+    enabled: true
+
+  - name: Spendesk
+    slug: spendesk
+    ats: greenhouse
+    enabled: true
+
+  - name: Swile
+    slug: swile
+    ats: greenhouse
+    enabled: true
+
+  - name: Lydia
+    slug: lydia
+    ats: lever
+    enabled: true
+
+  - name: Ledger
+    slug: ledger
+    ats: greenhouse
+    enabled: true
+
+  - name: ManoMano
+    slug: manomano
+    ats: greenhouse
+    enabled: true
+
+  - name: Vestiaire Collective
+    slug: vestiairecollective
+    ats: greenhouse
+    enabled: true
+
+  - name: Mirakl
+    slug: mirakl
+    ats: greenhouse
+    enabled: true
+
+  - name: BackMarket
+    slug: backmarket
+    ats: greenhouse
+    enabled: true
+
+  - name: Dataiku
+    slug: dataiku
+    ats: greenhouse
+    enabled: true
+
+  - name: Shift Technology
+    slug: shifttechnology
+    ats: greenhouse
+    enabled: true
+
+  - name: Meero
+    slug: meero
+    ats: lever
+    enabled: true
+
+  - name: Toucan Toco
+    slug: toucantoco
+    ats: lever
+    enabled: true
+
+  - name:360Learning
+    slug: 360learning
+    ats: greenhouse
+    enabled: true
+
+  - name: Didomi
+    slug: didomi
+    ats: lever
+    enabled: true
+
+  - name: Partoo
+    slug: partoo
+    ats: lever
+    enabled: true
+
+  - name: Klarna (France)
+    slug: klarna
+    ats: greenhouse
+    enabled: true
+
+  - name: Legalstart
+    slug: legalstart
+    ats: lever
+    enabled: true
+
+  - name: Alma
+    slug: almapay
+    ats: ashby
+    enabled: true
+
+  - name: Finary
+    slug: finary
+    ats: ashby
+    enabled: true
+
+  - name: Brigad
+    slug: brigad
+    ats: lever
+    enabled: true
+
+  - name: Welcome to the Jungle
+    slug: welcometothejungle
+    ats: greenhouse
+    enabled: true
+
+  # ── INTERNATIONAL AVEC BUREAUX EN FRANCE ─────────────────────────────────────
+  - name: Datadog
+    slug: datadog
+    ats: greenhouse
+    enabled: true
+
+  - name: Criteo
+    slug: criteo
+    ats: greenhouse
+    enabled: true
+
+  - name: Deezer
+    slug: deezer
+    ats: lever
+    enabled: true
+
+  - name: Aircall
+    slug: aircall
+    ats: greenhouse
+    enabled: true
+
+  - name: Algolia
+    slug: algolia
+    ats: greenhouse
+    enabled: true
+
+  - name: Contentful
+    slug: contentful
+    ats: greenhouse
+    enabled: true
+
+  - name: Talend
+    slug: talend
+    ats: greenhouse
+    enabled: true
+
+  - name: Mention
+    slug: mention
+    ats: lever
+    enabled: true
+
+  - name: Sinch
+    slug: sinch
+    ats: greenhouse
+    enabled: true
+
+  - name: Sqreen
+    slug: sqreen
+    ats: greenhouse
+    enabled: false
+
+  # ── REMOTE-FIRST / INTERNATIONAL ──────────────────────────────────────────────
+  - name: GitLab
+    slug: gitlab
+    ats: greenhouse
+    enabled: true
+
+  - name: Notion
+    slug: notion
+    ats: ashby
+    enabled: true
+
+  - name: Linear
+    slug: linear
+    ats: ashby
+    enabled: true
+
+  - name: Vercel
+    slug: vercel
+    ats: lever
+    enabled: true
+
+  - name: Zapier
+    slug: zapier
+    ats: greenhouse
+    enabled: true
+
+  - name: Buffer
+    slug: buffer
+    ats: greenhouse
+    enabled: true
+
+  - name: Basecamp
+    slug: basecamp
+    ats: lever
+    enabled: false
+
+  - name: Miro
+    slug: miro
+    ats: greenhouse
+    enabled: true
+
+  - name: Figma
+    slug: figma
+    ats: greenhouse
+    enabled: true
+
+  - name: Intercom
+    slug: intercom
+    ats: greenhouse
+    enabled: true
+
+  - name: Stripe
+    slug: stripe
+    ats: greenhouse
+    enabled: true
+
+  - name: Shopify
+    slug: shopify
+    ats: greenhouse
+    enabled: true
+
+  - name: HubSpot
+    slug: hubspot
+    ats: greenhouse
+    enabled: true
+
+  - name: Twilio
+    slug: twilio
+    ats: greenhouse
+    enabled: true
+
+  - name: Typeform
+    slug: typeform
+    ats: greenhouse
+    enabled: true
+
+  - name: Loom
+    slug: loom
+    ats: greenhouse
+    enabled: true
+
+  - name: Airtable
+    slug: airtable
+    ats: greenhouse
+    enabled: true
+
+  - name: Segment
+    slug: segment
+    ats: greenhouse
+    enabled: false
+
+  - name: Brevo (ex-Sendinblue)
+    slug: brevo
+    ats: greenhouse
+    enabled: true
+
+  - name: n8n
+    slug: n8n
+    ats: ashby
+    enabled: true
+
+  - name: Retool
+    slug: retool
+    ats: greenhouse
+    enabled: true
+
+  - name: Mistral AI
+    slug: mistral-ai
+    ats: ashby
+    enabled: true
+
+  - name: Anthropic
+    slug: anthropic
+    ats: greenhouse
+    enabled: true
+
+  - name: Cohere
+    slug: cohere
+    ats: greenhouse
+    enabled: true
+
+  - name: Hugging Face
+    slug: huggingface
+    ats: lever
+    enabled: true
+
+  - name: ElevenLabs
+    slug: elevenlabs
+    ats: ashby
+    enabled: true
